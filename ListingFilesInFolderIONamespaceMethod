@@ -1,0 +1,173 @@
+Imports System.IO
+Imports System.Web
+Imports System.Web.Security
+Imports System.Security.Principal
+Imports System.Runtime.InteropServices
+Imports System.Data.Sql
+Imports System.Data.SqlClient
+Imports System.Data.SqlTypes
+Imports System.Data
+Imports System.Text.RegularExpressions
+
+Partial Class flBalancedScorecards
+
+    '*******************************************************************************************************************************
+    'Author: D.Morris
+    'Date 02/03/2014
+    'The code page allow the file in the shared directory to be listed in a gridview control, and also downloaded to the client
+    'machine. Additional functionalilty is incorporated to allow the List of filenames to be sorted in natural order in the gridview
+    'control. It reads the directory using method from the Sysem.IO namespace.
+    '*******************************************************************************************************************************
+
+    Inherits System.Web.UI.Page
+
+    'Variables relating to impersonating a login
+    'to have the correct access to upload a file
+    Dim LOGON32_LOGON_INTERACTIVE As Integer = 2
+    Dim LOGON32_PROVIDER_DEFAULT As Integer = 0
+    Dim impersonationContext As WindowsImpersonationContext
+
+    Private Property DisplayPath As Object
+
+    Declare Function LogonUserA Lib "advapi32.dll" (ByVal lpszUsername As String, _
+                        ByVal lpszDomain As String, _
+                        ByVal lpszPassword As String, _
+                        ByVal dwLogonType As Integer, _
+                        ByVal dwLogonProvider As Integer, _
+                        ByRef phToken As IntPtr) As Integer
+
+    Declare Auto Function DuplicateToken Lib "advapi32.dll" ( _
+                        ByVal ExistingTokenHandle As IntPtr, _
+                        ByVal ImpersonationLevel As Integer, _
+                        ByRef DuplicateTokenHandle As IntPtr) As Integer
+
+    Declare Auto Function RevertToSelf Lib "advapi32.dll" () As Long
+    Declare Auto Function CloseHandle Lib "kernel32.dll" (ByVal handle As IntPtr) As Long
+
+    Public Function impersonateValidUser(ByVal userName As String, _
+    ByVal domain As String, ByVal password As String) As Boolean
+
+        Dim tempWindowsIdentity As WindowsIdentity
+        Dim token As IntPtr = IntPtr.Zero
+        Dim tokenDuplicate As IntPtr = IntPtr.Zero
+        impersonateValidUser = False
+
+        If RevertToSelf() Then
+            If LogonUserA(userName, domain, password, LOGON32_LOGON_INTERACTIVE,
+                         LOGON32_PROVIDER_DEFAULT, token) <> 0 Then
+                If DuplicateToken(token, 2, tokenDuplicate) <> 0 Then
+                    tempWindowsIdentity = New WindowsIdentity(tokenDuplicate)
+                    impersonationContext = tempWindowsIdentity.Impersonate()
+                    If Not impersonationContext Is Nothing Then
+                        impersonateValidUser = True
+                    End If
+                End If
+            End If
+        End If
+
+        If Not tokenDuplicate.Equals(IntPtr.Zero) Then
+            CloseHandle(tokenDuplicate)
+        End If
+
+        If Not token.Equals(IntPtr.Zero) Then
+            CloseHandle(token)
+        End If
+
+    End Function
+
+    Public Sub undoImpersonation()
+        impersonationContext.Undo()
+    End Sub
+
+    Protected Sub Page_Load(ByVal sender As Object, ByVal e As EventArgs) Handles Me.Load
+
+        If impersonateValidUser("hdd_information_dev", "cymru", "N0rthafrica") Then
+
+            'Check if the server call is a post back 
+            If Not IsPostBack Then
+
+                'Initilize a new instance of the DirectoryInfo class on the specified path 
+                Dim diStartDir As IO.DirectoryInfo = New IO.DirectoryInfo("\\7a2blsrvinf0003\Reporting\Published Reports\Balanced Scorecards\")
+
+                'Initilize a new list of FileInfo class
+                Dim ListOfMatchingFiles As New List(Of IO.FileInfo)
+
+                'Loop through the files in the directory and add them to the list ListOfMatchingFiles
+                For Each FileName In diStartDir.GetFiles("*.*", IO.SearchOption.AllDirectories)
+                    ListOfMatchingFiles.Add(FileName)
+                Next
+
+                'Use the Sort method of the List to sort the files into a natural order
+                'The sort method calls the class Comparer_FileInfo_Name_NaturalSort, which implements IComparer
+                ListOfMatchingFiles.Sort(New Comparer_FileInfo_Name_NaturalSort)
+                ListOfMatchingFiles.Reverse()
+
+                'Set up the data source and databind for the gridview control
+                GridView1.DataSource = ListOfMatchingFiles
+                GridView1.DataBind()
+
+            End If
+
+            undoImpersonation()
+
+        Else
+
+            UploadStatusLabel.Text = "An unknown error has occurred. Please contact the site administrator if this persists."
+
+        End If
+
+    End Sub
+
+    'This sub adds the functionality to download the file from the gridview control
+    Protected Sub DownloadFile(ByVal sender As Object, ByVal e As EventArgs)
+
+        'Pass the CommandArgument from the LinkButton control in Gridview1 to the filePath string variable
+        Dim filePath As String = CType(sender, LinkButton).CommandArgument
+
+        'Write information about the filetype and filename of the file being dowloaded to the client
+        Response.ContentType = ContentType
+        Response.AppendHeader("Content-Disposition", ("attachment; filename= " + filePath))
+
+        'Initilize a new instance of the DirectoryInfo class on the specified path 
+        Dim Dfile As New System.IO.DirectoryInfo("\\7a2blsrvinf0003\Reporting\Published Reports\Balanced Scorecards\" + filePath)
+
+        'Write the contents of the specified file directly to an HTTP response output stream as a file block
+        Response.WriteFile(Dfile.ToString)
+
+        'Send all currently buffered output to the client, stop execution of the page, and raises the EndRequest event.
+        Response.End()
+
+    End Sub
+
+End Class
+
+'*******************************************************************************************************************************
+'This class implements IComparer for the IO file object and allows the List to be ordered in natural order, i.e.
+'1) - MyFile.xls, 2) - MyFile.xls,....... 10) - MyFile.xls instread of 1) - MyFile.xls, 10)  - MyFile.xls,...... 9) - MyFile.xls 
+'*******************************************************************************************************************************
+Partial Class Comparer_FileInfo_Name_NaturalSort
+    Implements IComparer(Of IO.FileInfo)
+
+    Declare Unicode Function StrCmpLogicalW Lib "shlwapi.dll" (ByVal s1 As String, ByVal s2 As String) As Integer
+
+    Public Function Compare(ByVal fi1 As IO.FileInfo, ByVal fi2 As IO.FileInfo) As Integer Implements IComparer(Of IO.FileInfo).Compare
+        Return StrCmpLogicalW(fi1.Name, fi2.Name)
+    End Function
+End Class
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
