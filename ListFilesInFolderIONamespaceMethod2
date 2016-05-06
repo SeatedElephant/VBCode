@@ -1,0 +1,123 @@
+Imports System.IO
+Imports System.Web
+Imports System.Web.Security
+Imports System.Security.Principal
+Imports System.Runtime.InteropServices
+Imports System.Data.Sql
+Imports System.Data.SqlClient
+Imports System.Data.SqlTypes
+Imports System.Data
+
+Partial Class flStrokePerformance
+
+    Inherits System.Web.UI.Page
+
+    'Variables relating to impersonating a login
+    'to have the correct access to upload a file
+
+    Dim LOGON32_LOGON_INTERACTIVE As Integer = 2
+    Dim LOGON32_PROVIDER_DEFAULT As Integer = 0
+    Dim impersonationContext As WindowsImpersonationContext
+
+    Declare Function LogonUserA Lib "advapi32.dll" (ByVal lpszUsername As String, _
+                        ByVal lpszDomain As String, _
+                        ByVal lpszPassword As String, _
+                        ByVal dwLogonType As Integer, _
+                        ByVal dwLogonProvider As Integer, _
+                        ByRef phToken As IntPtr) As Integer
+
+    Declare Auto Function DuplicateToken Lib "advapi32.dll" ( _
+                        ByVal ExistingTokenHandle As IntPtr, _
+                        ByVal ImpersonationLevel As Integer, _
+                        ByRef DuplicateTokenHandle As IntPtr) As Integer
+
+    Declare Auto Function RevertToSelf Lib "advapi32.dll" () As Long
+    Declare Auto Function CloseHandle Lib "kernel32.dll" (ByVal handle As IntPtr) As Long
+
+
+    Private Function impersonateValidUser(ByVal userName As String, _
+    ByVal domain As String, ByVal password As String) As Boolean
+
+        Dim tempWindowsIdentity As WindowsIdentity
+        Dim token As IntPtr = IntPtr.Zero
+        Dim tokenDuplicate As IntPtr = IntPtr.Zero
+        impersonateValidUser = False
+
+        If RevertToSelf() Then
+            If LogonUserA(userName, domain, password, LOGON32_LOGON_INTERACTIVE,
+                         LOGON32_PROVIDER_DEFAULT, token) <> 0 Then
+                If DuplicateToken(token, 2, tokenDuplicate) <> 0 Then
+                    tempWindowsIdentity = New WindowsIdentity(tokenDuplicate)
+                    impersonationContext = tempWindowsIdentity.Impersonate()
+                    If Not impersonationContext Is Nothing Then
+                        impersonateValidUser = True
+                    End If
+                End If
+            End If
+        End If
+
+        If Not tokenDuplicate.Equals(IntPtr.Zero) Then
+            CloseHandle(tokenDuplicate)
+        End If
+
+        If Not token.Equals(IntPtr.Zero) Then
+            CloseHandle(token)
+        End If
+
+    End Function
+
+    Private Sub undoImpersonation()
+        impersonationContext.Undo()
+    End Sub
+
+    Protected Sub Page_Load(ByVal sender As Object, ByVal e As EventArgs) Handles Me.Load
+
+        If impersonateValidUser("hdd_information_dev", "cymru", "N0rthafrica") Then
+
+            If Not IsPostBack Then
+                Dim filePaths2() As String = Directory.GetFiles(Server.MapPath("~\Published Reports\Stroke Performance\"))
+                Dim files2 As List(Of ListItem) = New List(Of ListItem)
+                For Each filePath2 As String In filePaths2
+                    files2.Add(New ListItem(Path.GetFileName(filePath2), filePath2))
+                Next
+
+                GridView1.DataSource = files2
+                GridView1.DataBind()
+
+            End If
+
+            undoImpersonation()
+
+        Else
+
+            UploadStatusLabel.Text = "An unknown error has occurred. Please contact the site administrator if this persists."
+
+        End If
+
+    End Sub
+
+    Protected Sub DownloadFile(ByVal sender As Object, ByVal e As EventArgs)
+        Dim filePath As String = CType(sender, LinkButton).CommandArgument
+        Response.ContentType = ContentType
+        Response.AppendHeader("Content-Disposition", ("attachment; filename=" + Path.GetFileName(filePath)))
+        Response.WriteFile(filePath)
+        Response.End()
+    End Sub
+
+End Class
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
